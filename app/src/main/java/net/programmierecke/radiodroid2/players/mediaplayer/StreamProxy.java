@@ -1,15 +1,18 @@
-package net.programmierecke.radiodroid2;
+package net.programmierecke.radiodroid2.players.mediaplayer;
 
+import android.support.annotation.NonNull;
 import android.util.Log;
 
+import net.programmierecke.radiodroid2.BuildConfig;
+import net.programmierecke.radiodroid2.HttpClient;
+import net.programmierecke.radiodroid2.Utils;
 import net.programmierecke.radiodroid2.data.PlaylistM3U;
 import net.programmierecke.radiodroid2.data.PlaylistM3UEntry;
 import net.programmierecke.radiodroid2.data.ShoutcastInfo;
 import net.programmierecke.radiodroid2.data.StreamLiveInfo;
-import net.programmierecke.radiodroid2.interfaces.IStreamProxyEventReceiver;
+import net.programmierecke.radiodroid2.recording.Recordable;
+import net.programmierecke.radiodroid2.recording.RecordableListener;
 
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -32,19 +35,19 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
-public class StreamProxy {
+public class StreamProxy implements Recordable {
     private static final String TAG = "PROXY";
 
-    private IStreamProxyEventReceiver callback;
+    private StreamProxyEventReceiver callback;
+    private RecordableListener recordableListener;
     private String uri;
+    private byte readBuffer[] = new byte[256 * 16];
     private long connectionBytesTotal = 0;
     private volatile String localAddress = null;
-    private FileOutputStream fileOutputStream;
     private boolean isStopped = false;
-    private String outFileName = null;
     private boolean isHls = false;
 
-    public StreamProxy(String uri, IStreamProxyEventReceiver callback) {
+    public StreamProxy(String uri, StreamProxyEventReceiver callback) {
         this.uri = uri;
         this.callback = callback;
 
@@ -67,8 +70,6 @@ public class StreamProxy {
         }, "StreamProxy").start();
     }
 
-    private byte buf[] = new byte[256 * 16];
-
     private void proxyDefaultStream(ShoutcastInfo info, ResponseBody responseBody, OutputStream outStream) throws Exception {
         int bytesUntilMetaData = 0;
         boolean streamHasMetaData = false;
@@ -86,11 +87,11 @@ public class StreamProxy {
         while (!isStopped) {
             int readBytes;
             if (!streamHasMetaData || (bytesUntilMetaData > 0)) {
-                int bytesToRead = Math.min(buf.length - readBytesBuffer, inputStream.available());
+                int bytesToRead = Math.min(readBuffer.length - readBytesBuffer, inputStream.available());
                 if (streamHasMetaData) {
                     bytesToRead = Math.min(bytesUntilMetaData, bytesToRead);
                 }
-                readBytes = inputStream.read(buf, readBytesBuffer, bytesToRead);
+                readBytes = inputStream.read(readBuffer, readBytesBuffer, bytesToRead);
                 if (readBytes == 0) {
                     continue;
                 }
@@ -105,11 +106,12 @@ public class StreamProxy {
 
                 if (BuildConfig.DEBUG) Log.d(TAG, "stream bytes relayed:" + readBytes);
 
-                outStream.write(buf, 0, readBytesBuffer);
-                if (fileOutputStream != null) {
-                    if (BuildConfig.DEBUG) Log.d(TAG, "writing to record file..");
-                    fileOutputStream.write(buf, 0, readBytesBuffer);
+                outStream.write(readBuffer, 0, readBytesBuffer);
+
+                if (recordableListener != null) {
+                    recordableListener.onBytesAvailable(readBuffer, 0, readBytesBuffer);
                 }
+
                 readBytesBuffer = 0;
             } else {
                 readBytes = readMetaData(inputStream);
@@ -118,7 +120,7 @@ public class StreamProxy {
             }
         }
 
-        stopRecord();
+        stopRecording();
     }
 
     private int readMetaData(InputStream inputStream) throws IOException {
@@ -129,9 +131,9 @@ public class StreamProxy {
 
         if (BuildConfig.DEBUG) Log.d(TAG, "metadata size:" + metadataBytes);
         if (metadataBytes > 0) {
-            Arrays.fill(buf, (byte) 0);
+            Arrays.fill(readBuffer, (byte) 0);
             while (true) {
-                readBytes = inputStream.read(buf, readBytesBufferMetadata, metadataBytesToRead);
+                readBytes = inputStream.read(readBuffer, readBytesBufferMetadata, metadataBytesToRead);
                 if (readBytes == 0) {
                     continue;
                 }
@@ -141,7 +143,7 @@ public class StreamProxy {
                 metadataBytesToRead -= readBytes;
                 readBytesBufferMetadata += readBytes;
                 if (metadataBytesToRead <= 0) {
-                    String s = new String(buf, 0, metadataBytes, "utf-8");
+                    String s = new String(readBuffer, 0, metadataBytes, "utf-8");
                     if (BuildConfig.DEBUG) Log.d(TAG, "METADATA:" + s);
                     Map<String, String> rawMetadata = decodeShoutcastMetadata(s);
                     StreamLiveInfo streamLiveInfo = new StreamLiveInfo(rawMetadata);
@@ -171,22 +173,17 @@ public class StreamProxy {
             ResponseBody responseBody = response.body();
 
             InputStream inContent = responseBody.byteStream();
-            boolean recordActive = false;
-            if (fileOutputStream != null) {
-                recordActive = true;
-            }
 
-            byte[] bufContent = new byte[1000];
             while (!isStopped) {
-                int bytesRead = inContent.read(bufContent);
+                int bytesRead = inContent.read(readBuffer);
                 if (bytesRead < 0) {
                     break;
                 }
                 connectionBytesTotal += bytesRead;
-                outStream.write(bufContent, 0, bytesRead);
-                if ((fileOutputStream != null) && recordActive) {
-                    Log.v(TAG, "writing to record file..");
-                    fileOutputStream.write(bufContent, 0, bytesRead);
+                outStream.write(readBuffer, 0, bytesRead);
+
+                if (recordableListener != null) {
+                    recordableListener.onBytesAvailable(readBuffer, 0, bytesRead);
                 }
             }
         } catch (Exception e) {
@@ -286,8 +283,8 @@ public class StreamProxy {
                             .build();
 
                     final OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
-                            .connectTimeout(2, TimeUnit.SECONDS)
-                            .readTimeout(2, TimeUnit.SECONDS)
+                            .connectTimeout(4, TimeUnit.SECONDS)
+                            .readTimeout(10, TimeUnit.SECONDS)
                             .build();
 
                     final Response response = httpClient.newCall(request).execute();
@@ -371,52 +368,8 @@ public class StreamProxy {
         if (!isStopped) {
             callback.streamStopped();
         }
+
         stop();
-    }
-
-    public void record(String stationName, String streamTitle) {
-        Calendar calendar = Calendar.getInstance();
-        calendar.setTimeInMillis(System.currentTimeMillis());
-        String appendTitle = "";
-        if (!streamTitle.isEmpty()) {
-            appendTitle = "_-_" + Utils.sanitizeName(streamTitle);
-        }
-        if (getIsHls()) {
-            outFileName = String.format(Locale.US, "%1$tY%1$tm%1$td-%1$tH%1$tM%1$tS_%2$s%3$s.ts", calendar, Utils.sanitizeName(stationName), appendTitle);
-        } else {
-            outFileName = String.format(Locale.US, "%1$tY%1$tm%1$td-%1$tH%1$tM%1$tS_%2$s%3$s.mp3", calendar, Utils.sanitizeName(stationName), appendTitle);
-        }
-        recordInternal(outFileName);
-    }
-
-    public boolean getIsHls() {
-        return isHls;
-    }
-
-    private void recordInternal(String fileName) {
-        if (fileOutputStream == null) {
-            try {
-                String path = RecordingsManager.getRecordDir() + "/" + fileName;
-                if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "start recording to :" + fileName + " in dir " + path);
-                }
-                fileOutputStream = new FileOutputStream(path);
-            } catch (FileNotFoundException e) {
-                Log.e(TAG, "record('" + fileName + "'): ", e);
-            }
-        }
-    }
-
-    public void stopRecord() {
-        if (fileOutputStream != null) {
-            try {
-                fileOutputStream.close();
-            } catch (IOException e) {
-                Log.e(TAG, "io exception while stopping record:" + e);
-            }
-            outFileName = null;
-            fileOutputStream = null;
-        }
     }
 
     private Map<String, String> decodeShoutcastMetadata(String metadata) {
@@ -481,13 +434,34 @@ public class StreamProxy {
     public void stop() {
         if (BuildConfig.DEBUG) Log.d(TAG, "stopping proxy.");
         isStopped = true;
+        stopRecording();
     }
 
-    public String getOutFileName() {
-        return outFileName;
+    @Override
+    public void startRecording(@NonNull RecordableListener recordableListener) {
+        this.recordableListener = recordableListener;
     }
 
-    public long getTotalBytes() {
-        return connectionBytesTotal;
+    @Override
+    public void stopRecording() {
+        if (recordableListener != null) {
+            recordableListener.onRecordingEnded();
+            recordableListener = null;
+        }
+    }
+
+    @Override
+    public boolean isRecording() {
+        return recordableListener != null;
+    }
+
+    @Override
+    public String getTitle() {
+        return "";
+    }
+
+    @Override
+    public String getExtension() {
+        return isHls ? "ts" : "mp3";
     }
 }

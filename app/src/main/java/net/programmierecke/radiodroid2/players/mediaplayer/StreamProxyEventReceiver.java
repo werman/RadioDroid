@@ -1,9 +1,9 @@
-package net.programmierecke.radiodroid2.interfaces;
+package net.programmierecke.radiodroid2.players.mediaplayer;
 
 import net.programmierecke.radiodroid2.data.ShoutcastInfo;
 import net.programmierecke.radiodroid2.data.StreamLiveInfo;
 
-public interface IStreamProxyEventReceiver {
+interface StreamProxyEventReceiver {
     void foundShoutcastStream(ShoutcastInfo bitrate, boolean isHls);
     void foundLiveStreamInfo(StreamLiveInfo liveInfo);
     void streamCreated(String proxyConnection);

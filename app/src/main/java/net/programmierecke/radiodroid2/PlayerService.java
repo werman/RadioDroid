@@ -1,6 +1,7 @@
 package net.programmierecke.radiodroid2;
 
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import android.app.Notification;
 import android.app.PendingIntent;
@@ -19,6 +20,7 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.RemoteException;
 import android.support.v4.app.NotificationCompat;
+import android.support.v4.app.NotificationManagerCompat;
 import android.support.v4.content.res.ResourcesCompat;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaButtonReceiver;
@@ -31,9 +33,13 @@ import android.widget.Toast;
 
 import net.programmierecke.radiodroid2.data.ShoutcastInfo;
 import net.programmierecke.radiodroid2.data.StreamLiveInfo;
-import net.programmierecke.radiodroid2.players.ExoPlayerWrapper;
-import net.programmierecke.radiodroid2.players.MediaPlayerWrapper;
+import net.programmierecke.radiodroid2.players.exoplayer.ExoPlayerWrapper;
+import net.programmierecke.radiodroid2.players.mediaplayer.MediaPlayerWrapper;
 import net.programmierecke.radiodroid2.players.RadioPlayer;
+import net.programmierecke.radiodroid2.recording.RecordingsManager;
+import net.programmierecke.radiodroid2.recording.RunningRecordingInfo;
+
+import okhttp3.OkHttpClient;
 
 public class PlayerService extends Service implements RadioPlayer.PlayerListener {
     protected static final int NOTIFY_ID = 1;
@@ -193,22 +199,11 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
         @Override
         public void startRecording() throws RemoteException {
             if (radioPlayer != null) {
-                Integer maxloop = 20;
+                RadioDroidApp radioDroidApp = (RadioDroidApp) getApplication();
+                RecordingsManager recordingsManager = radioDroidApp.getRecordingsManager();
 
-                StreamLiveInfo liveInfo = PlayerServiceUtil.getMetadataLive();
+                recordingsManager.record(radioPlayer);
 
-                while (liveInfo.getTitle().isEmpty() && maxloop > 0) {
-                    try {
-                        Thread.sleep(50);
-                    } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                    }
-
-                    liveInfo = PlayerServiceUtil.getMetadataLive();
-                    maxloop--;
-                }
-
-                radioPlayer.startRecording(currentStationName, liveInfo.getTitle());
                 sendBroadCast(PLAYER_SERVICE_META_UPDATE);
             }
         }
@@ -216,7 +211,11 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
         @Override
         public void stopRecording() throws RemoteException {
             if (radioPlayer != null) {
-                radioPlayer.stopRecording();
+                RadioDroidApp radioDroidApp = (RadioDroidApp) getApplication();
+                RecordingsManager recordingsManager = radioDroidApp.getRecordingsManager();
+
+                recordingsManager.stopRecording(radioPlayer);
+
                 sendBroadCast(PLAYER_SERVICE_META_UPDATE);
             }
         }
@@ -229,7 +228,13 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
         @Override
         public String getCurrentRecordFileName() throws RemoteException {
             if (radioPlayer != null) {
-                return radioPlayer.getRecordFileName();
+                RadioDroidApp radioDroidApp = (RadioDroidApp) getApplication();
+                RecordingsManager recordingsManager = radioDroidApp.getRecordingsManager();
+
+                RunningRecordingInfo info = recordingsManager.getRecordingInfo(radioPlayer);
+                if (info != null) {
+                    return info.getFileName();
+                }
             }
             return null;
         }
@@ -237,7 +242,13 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
         @Override
         public long getTransferredBytes() throws RemoteException {
             if (radioPlayer != null) {
-                return radioPlayer.getRecordedBytes();
+                RadioDroidApp radioDroidApp = (RadioDroidApp) getApplication();
+                RecordingsManager recordingsManager = radioDroidApp.getRecordingsManager();
+
+                RunningRecordingInfo info = recordingsManager.getRecordingInfo(radioPlayer);
+                if (info != null) {
+                    return info.getBytesWritten();
+                }
             }
             return 0;
         }
@@ -355,7 +366,12 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
         audioManager = (AudioManager) itsContext.getSystemService(Context.AUDIO_SERVICE);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            radioPlayer = new RadioPlayer(PlayerService.this, new ExoPlayerWrapper());
+            OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
+                    .connectTimeout(2, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS)
+                    .build();
+
+            radioPlayer = new RadioPlayer(PlayerService.this, new ExoPlayerWrapper(httpClient));
         } else {
             // use old MediaPlayer on API levels < 16
             // https://github.com/google/ExoPlayer/issues/711
@@ -460,7 +476,7 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
 
         acquireWakeLockAndWifiLock();
 
-        radioPlayer.play(currentStationURL, isAlarm);
+        radioPlayer.play(currentStationURL, currentStationName, isAlarm);
     }
 
     private void setMediaPlaybackState(int state) {
@@ -636,15 +652,8 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
     private void updateNotification() {
         switch (radioPlayer.getPlayState()) {
             case Idle:
-                break;
-            case CreateProxy:
-                sendMessage(currentStationName, itsContext.getResources().getString(R.string.notify_start_proxy), itsContext.getResources().getString(R.string.notify_start_proxy));
-                break;
-            case ClearOld:
-                sendMessage(currentStationName, itsContext.getResources().getString(R.string.notify_stop_player), itsContext.getResources().getString(R.string.notify_stop_player));
-                break;
-            case PrepareStream:
-                sendMessage(currentStationName, itsContext.getResources().getString(R.string.notify_prepare_stream), itsContext.getResources().getString(R.string.notify_prepare_stream));
+                NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
+                notificationManager.cancel(NOTIFY_ID);
                 break;
             case PrePlaying:
                 sendMessage(currentStationName, itsContext.getResources().getString(R.string.notify_try_play), itsContext.getResources().getString(R.string.notify_try_play));
@@ -717,6 +726,10 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
                             sendBroadcast(i);
                         }
 
+                        if (state == RadioPlayer.PlayState.Idle) {
+                            stop();
+                        }
+
                         break;
                     }
                 }
@@ -729,6 +742,11 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
     @Override
     public void onPlayerError(int messageId) {
         toastOnUi(messageId);
+    }
+
+    @Override
+    public void onBufferedTimeUpdate(long bufferedMs) {
+
     }
 
     @Override

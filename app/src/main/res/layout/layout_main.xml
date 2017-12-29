@@ -2,11 +2,12 @@
 
 <!-- Your normal content view -->
 <LinearLayout
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:orientation="vertical"
-    xmlns:android="http://schemas.android.com/apk/res/android">
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        xmlns:app="http://schemas.android.com/apk/res-auto"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:orientation="vertical"
+        xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- We use a Toolbar so that our drawer can be displayed
      in front of the action bar -->
@@ -33,6 +34,8 @@
         android:layout_height="match_parent"
         android:layout_width="match_parent"
         android:id="@+id/drawerLayout"
+        android:layout_weight="0.5"
+        android:background="?android:attr/windowBackground"
         >
 
         <!-- The rest of your content view -->
@@ -51,10 +54,19 @@
             android:layout_height="match_parent"
             android:layout_gravity="start"
             android:id="@+id/my_navigation_view"
+            app:itemTextColor="@color/menu_text_color"
+            app:itemIconTint="@color/menu_text_color"
             app:menu="@menu/menu_drawer"
             android:layout_marginTop="0dp"
             />
 
     </android.support.v4.widget.DrawerLayout>
+
+
+    <RelativeLayout
+            android:id="@+id/playerView"
+            android:layout_width="match_parent"
+            android:layout_height="?android:attr/actionBarSize">
+    </RelativeLayout>
 
 </LinearLayout>

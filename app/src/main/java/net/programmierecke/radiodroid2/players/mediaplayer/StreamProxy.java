@@ -285,6 +285,7 @@ public class StreamProxy implements Recordable {
                     final OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
                             .connectTimeout(4, TimeUnit.SECONDS)
                             .readTimeout(10, TimeUnit.SECONDS)
+                            .retryOnConnectionFailure(true)
                             .build();
 
                     final Response response = httpClient.newCall(request).execute();

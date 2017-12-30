@@ -54,6 +54,9 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
 
     private RecordableListener recordableListener;
 
+    private long totalTransferredBytes;
+    private long currentPlaybackTransferredBytes;
+
     private boolean isHls;
 
     public ExoPlayerWrapper(@NonNull OkHttpClient httpClient) {
@@ -62,6 +65,8 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
 
     @Override
     public void playRemote(String remoteUrl, Context context, boolean isAlarm) {
+        currentPlaybackTransferredBytes = 0;
+
         if (player != null) {
             player.stop();
         }
@@ -144,6 +149,16 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
     }
 
     @Override
+    public long getTotalTransferredBytes() {
+        return totalTransferredBytes;
+    }
+
+    @Override
+    public long getCurrentPlaybackTransferredBytes() {
+        return currentPlaybackTransferredBytes;
+    }
+
+    @Override
     public void setVolume(float newVolume) {
         if (player != null) {
             player.setVolume(newVolume);
@@ -182,6 +197,9 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
 
     @Override
     public void onDataSourceBytesRead(byte[] buffer, int offset, int length) {
+        totalTransferredBytes += length;
+        currentPlaybackTransferredBytes += length;
+
         if (recordableListener != null) {
             recordableListener.onBytesAvailable(buffer, offset, length);
         }

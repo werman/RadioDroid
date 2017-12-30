@@ -12,6 +12,8 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
@@ -23,9 +25,11 @@ import java.util.Map;
 
 public class RecordingsManager {
     private final static String TAG = "Recordings";
+    private DateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US);
 
     private class RunningRecordableListener implements RecordableListener {
         private RunningRecordingInfo runningRecordingInfo;
+        private boolean ended;
 
         private RunningRecordableListener(@NonNull RunningRecordingInfo runningRecordingInfo) {
             this.runningRecordingInfo = runningRecordingInfo;
@@ -44,6 +48,12 @@ public class RecordingsManager {
 
         @Override
         public void onRecordingEnded() {
+            if(ended) {
+                return;
+            }
+
+            ended = true;
+
             try {
                 runningRecordingInfo.getOutputStream().close();
             } catch (IOException e) {
@@ -65,9 +75,11 @@ public class RecordingsManager {
 
             Calendar calendar = Calendar.getInstance();
             calendar.setTimeInMillis(System.currentTimeMillis());
+
+            String dataStr = dateFormatter.format(calendar.getTime());
             String sanitizedTitle = Utils.sanitizeName(info.getTitle());
 
-            info.setFileName(String.format(Locale.US, "%1$s_%2$tY%2$tm%2$td.%3$s", sanitizedTitle, calendar, recordable.getExtension()));
+            info.setFileName(String.format(Locale.US, "%s_%s.%s", sanitizedTitle, dataStr, recordable.getExtension()));
 
             //TODO: check available disk space here
 

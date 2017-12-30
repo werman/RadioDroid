@@ -8,4 +8,5 @@ interface StreamProxyEventReceiver {
     void foundLiveStreamInfo(StreamLiveInfo liveInfo);
     void streamCreated(String proxyConnection);
     void streamStopped();
+    void onBytesRead(byte[] buffer, int offset, int length);
 }

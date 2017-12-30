@@ -112,6 +112,8 @@ public class StreamProxy implements Recordable {
                     recordableListener.onBytesAvailable(readBuffer, 0, readBytesBuffer);
                 }
 
+                callback.onBytesRead(readBuffer, 0, readBytesBuffer);
+
                 readBytesBuffer = 0;
             } else {
                 readBytes = readMetaData(inputStream);

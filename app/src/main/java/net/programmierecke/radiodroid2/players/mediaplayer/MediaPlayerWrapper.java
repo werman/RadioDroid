@@ -28,9 +28,14 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
     private Context context;
     private boolean isAlarm;
 
+    private long totalTransferredBytes;
+    private long currentPlaybackTransferredBytes;
+
     @Override
     public void playRemote(String streamUrl, Context context, boolean isAlarm) {
         Log.v(TAG, "Stream url:" + streamUrl);
+
+        currentPlaybackTransferredBytes = 0;
 
         this.streamUrl = streamUrl;
         this.context = context;
@@ -112,6 +117,16 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
     }
 
     @Override
+    public long getTotalTransferredBytes() {
+        return totalTransferredBytes;
+    }
+
+    @Override
+    public long getCurrentPlaybackTransferredBytes() {
+        return currentPlaybackTransferredBytes;
+    }
+
+    @Override
     public void setVolume(float newVolume) {
         if (mediaPlayer != null) {
             mediaPlayer.setVolume(newVolume, newVolume);
@@ -167,6 +182,12 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
     public void streamStopped() {
         stop();
         playRemote(streamUrl, context, isAlarm);
+    }
+
+    @Override
+    public void onBytesRead(byte[] buffer, int offset, int length) {
+        totalTransferredBytes += length;
+        currentPlaybackTransferredBytes += length;
     }
 
     private void stopProxy() {

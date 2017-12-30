@@ -40,6 +40,7 @@ import android.widget.Toast;
 
 import com.squareup.picasso.Picasso;
 import com.squareup.picasso.Target;
+
 import net.programmierecke.radiodroid2.data.ShoutcastInfo;
 import net.programmierecke.radiodroid2.data.StreamLiveInfo;
 import net.programmierecke.radiodroid2.players.exoplayer.ExoPlayerWrapper;
@@ -259,13 +260,7 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
         @Override
         public long getTransferredBytes() throws RemoteException {
             if (radioPlayer != null) {
-                RadioDroidApp radioDroidApp = (RadioDroidApp) getApplication();
-                RecordingsManager recordingsManager = radioDroidApp.getRecordingsManager();
-
-                RunningRecordingInfo info = recordingsManager.getRecordingInfo(radioPlayer);
-                if (info != null) {
-                    return info.getBytesWritten();
-                }
+                return radioPlayer.getCurrentPlaybackTransferredBytes();
             }
             return 0;
         }
@@ -442,7 +437,7 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
 
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext().getApplicationContext());
         final boolean loadIcons = prefs.getBoolean("load_icons", false);
-        if(loadIcons)
+        if (loadIcons)
             downloadRadioIcon();
 
         int result = acquireAudioFocus();
@@ -706,7 +701,7 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
     private void downloadRadioIcon() {
         final float px = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 70, getResources().getDisplayMetrics());
 
-        if(currentStationIconUrl == null) return;
+        if (currentStationIconUrl == null) return;
 
         Picasso.with(getApplicationContext())
                 .load(currentStationIconUrl)
@@ -716,7 +711,7 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
                     public void onBitmapLoaded(Bitmap bitmap, Picasso.LoadedFrom from) {
                         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext().getApplicationContext());
                         final boolean useCircularIcons = prefs.getBoolean("circular_icons", false);
-                        if(!useCircularIcons)
+                        if (!useCircularIcons)
                             radioIcon = new BitmapDrawable(getResources(), bitmap);
                         else {
                             // Icon is not circular with this code. So we need to create custom notification view and then use RoundedBitmapDrawable there

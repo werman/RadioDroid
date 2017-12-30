@@ -106,7 +106,7 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
     }
 
     public final void stop() {
-        if(playState == PlayState.Idle) {
+        if (playState == PlayState.Idle) {
             return;
         }
 
@@ -203,6 +203,14 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
 
         playState = state;
         playerListener.onStateChanged(state, audioSessionId);
+    }
+
+    public long getTotalTransferredBytes() {
+        return player.getTotalTransferredBytes();
+    }
+
+    public long getCurrentPlaybackTransferredBytes() {
+        return player.getCurrentPlaybackTransferredBytes();
     }
 
     @Override

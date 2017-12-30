@@ -29,6 +29,10 @@ public interface PlayerWrapper extends Recordable {
 
     int getAudioSessionId();
 
+    long getTotalTransferredBytes();
+
+    long getCurrentPlaybackTransferredBytes();
+
     void setVolume(float newVolume);
 
     void setStateListener(PlayListener listener);

@@ -3,6 +3,7 @@ package net.programmierecke.radiodroid2.players.mediaplayer;
 import android.content.Context;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
+import android.os.Handler;
 import android.support.annotation.NonNull;
 import android.util.Log;
 
@@ -15,10 +16,16 @@ import net.programmierecke.radiodroid2.players.RadioPlayer;
 import net.programmierecke.radiodroid2.recording.RecordableListener;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiver {
+import okhttp3.OkHttpClient;
+
+public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyListener {
 
     final private String TAG = "MediaPlayerWrapper";
+
+    private OkHttpClient httpClient;
+    private Handler playerThreadHandler;
 
     private MediaPlayer mediaPlayer;
     private StreamProxy proxy;
@@ -28,28 +35,48 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
     private Context context;
     private boolean isAlarm;
 
+    private boolean isHls;
+
     private long totalTransferredBytes;
     private long currentPlaybackTransferredBytes;
+
+    private AtomicBoolean playerIsInLegalState = new AtomicBoolean(false);
+
+    public MediaPlayerWrapper(OkHttpClient httpClient, Handler playerThreadHandler) {
+        this.httpClient = httpClient;
+        this.playerThreadHandler = playerThreadHandler;
+    }
 
     @Override
     public void playRemote(String streamUrl, Context context, boolean isAlarm) {
         Log.v(TAG, "Stream url:" + streamUrl);
 
-        currentPlaybackTransferredBytes = 0;
+        if (!streamUrl.equals(this.streamUrl)) {
+            currentPlaybackTransferredBytes = 0;
+        }
 
         this.streamUrl = streamUrl;
         this.context = context;
         this.isAlarm = isAlarm;
 
-        if (proxy != null) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "stopping old proxy.");
-            stopProxy();
-        }
+        isHls = streamUrl.endsWith(".m3u8");
 
-        proxy = new StreamProxy(streamUrl, MediaPlayerWrapper.this);
+        if (!isHls) {
+            if (proxy != null) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "stopping old proxy.");
+                stopProxy();
+            }
+
+            proxy = new StreamProxy(httpClient, streamUrl, MediaPlayerWrapper.this);
+        } else {
+            stopProxy();
+            onStreamCreated(streamUrl);
+        }
     }
 
     private void playProxyStream(String proxyUrl, Context context, boolean isAlarm) {
+        playerIsInLegalState.set(false);
+
         if (mediaPlayer == null) {
             mediaPlayer = new MediaPlayer();
         }
@@ -61,6 +88,9 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
             mediaPlayer.setAudioStreamType(isAlarm ? AudioManager.STREAM_ALARM : AudioManager.STREAM_MUSIC);
             mediaPlayer.setDataSource(proxyUrl);
             mediaPlayer.prepare();
+
+            playerIsInLegalState.set(true);
+
             stateListener.onStateChanged(RadioPlayer.PlayState.PrePlaying);
             mediaPlayer.start();
             stateListener.onStateChanged(RadioPlayer.PlayState.Playing);
@@ -79,8 +109,11 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
     @Override
     public void pause() {
         if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-            mediaPlayer.pause();
+            mediaPlayer.stop();
+            mediaPlayer.reset();
         }
+
+        stateListener.onStateChanged(RadioPlayer.PlayState.Paused);
 
         stopProxy();
     }
@@ -88,19 +121,28 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
     @Override
     public void stop() {
         if (mediaPlayer != null) {
+            playerIsInLegalState.set(false);
+
             if (mediaPlayer.isPlaying()) {
                 mediaPlayer.stop();
             }
+
             mediaPlayer.release();
             mediaPlayer = null;
+
+            playerIsInLegalState.set(true);
         }
+
+        stateListener.onStateChanged(RadioPlayer.PlayState.Idle);
 
         stopProxy();
     }
 
     @Override
     public boolean isPlaying() {
-        return mediaPlayer != null && mediaPlayer.isPlaying();
+        // If player is in illegal state it is either starting playback or stopping it so we treat
+        // it as playing state.
+        return !playerIsInLegalState.get() || (mediaPlayer != null && mediaPlayer.isPlaying());
     }
 
     @Override
@@ -139,8 +181,15 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
     }
 
     @Override
+    public boolean canRecord() {
+        return mediaPlayer != null && !isHls;
+    }
+
+    @Override
     public void startRecording(@NonNull RecordableListener recordableListener) {
-        proxy.startRecording(recordableListener);
+        if (proxy != null) {
+            proxy.startRecording(recordableListener);
+        }
     }
 
     @Override
@@ -150,7 +199,7 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
 
     @Override
     public boolean isRecording() {
-        return proxy.isRecording();
+        return proxy != null && proxy.isRecording();
     }
 
     @Override
@@ -164,24 +213,28 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyEventReceiv
     }
 
     @Override
-    public void foundShoutcastStream(ShoutcastInfo shoutcastInfo, boolean isHls) {
+    public void onFoundShoutcastStream(ShoutcastInfo shoutcastInfo, boolean isHls) {
         stateListener.onDataSourceShoutcastInfo(shoutcastInfo, isHls);
     }
 
     @Override
-    public void foundLiveStreamInfo(StreamLiveInfo liveInfo) {
+    public void onFoundLiveStreamInfo(StreamLiveInfo liveInfo) {
         stateListener.onDataSourceStreamLiveInfo(liveInfo);
     }
 
     @Override
-    public void streamCreated(String proxyConnection) {
-        playProxyStream(proxyConnection, context, isAlarm);
+    public void onStreamCreated(final String proxyConnection) {
+        playerThreadHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                playProxyStream(proxyConnection, context, isAlarm);
+            }
+        });
     }
 
     @Override
-    public void streamStopped() {
+    public void onStreamStopped() {
         stop();
-        playRemote(streamUrl, context, isAlarm);
     }
 
     @Override

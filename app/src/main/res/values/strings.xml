@@ -98,10 +98,7 @@
     <string name="settings_warn_no_wifi_on">Warn when playing without Wifi connection</string>
     <string name="settings_warn_no_wifi_off">No warning when not on Wifi connection</string>
 
-    <string name="notify_start_proxy">Starting proxy..</string>
-    <string name="notify_stop_player">Stop old player..</string>
-    <string name="notify_prepare_stream">Preparing stream..</string>
-    <string name="notify_try_play">Try playing</string>
+    <string name="notify_pre_play">Connecting</string>
     <string name="notify_play">Playing</string>
     <string name="notify_paused">Paused</string>
     <string name="notify_starred">Station has been bookmarked as favorite</string>

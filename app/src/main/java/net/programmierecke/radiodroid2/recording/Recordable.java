@@ -4,6 +4,8 @@ import android.support.annotation.NonNull;
 
 public interface Recordable {
 
+    boolean canRecord();
+
     void startRecording(@NonNull RecordableListener recordableListener);
 
     void stopRecording();

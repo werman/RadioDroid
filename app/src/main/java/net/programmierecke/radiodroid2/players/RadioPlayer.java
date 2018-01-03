@@ -10,10 +10,17 @@ import android.support.annotation.NonNull;
 import android.util.Log;
 
 import net.programmierecke.radiodroid2.BuildConfig;
+import net.programmierecke.radiodroid2.HttpClient;
 import net.programmierecke.radiodroid2.data.ShoutcastInfo;
 import net.programmierecke.radiodroid2.data.StreamLiveInfo;
+import net.programmierecke.radiodroid2.players.exoplayer.ExoPlayerWrapper;
+import net.programmierecke.radiodroid2.players.mediaplayer.MediaPlayerWrapper;
 import net.programmierecke.radiodroid2.recording.Recordable;
 import net.programmierecke.radiodroid2.recording.RecordableListener;
+
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.OkHttpClient;
 
 public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
 
@@ -66,14 +73,28 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
         }
     };
 
-    public RadioPlayer(Context mainContext, PlayerWrapper playerWrapper) {
+    public RadioPlayer(Context mainContext) {
         this.mainContext = mainContext;
-        this.player = playerWrapper;
 
         playerThread = new HandlerThread("PlayerThread");
         playerThread.start();
 
         playerThreadHandler = new Handler(playerThread.getLooper());
+
+        // TODO: timeout values from preferences.
+        OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
+                .connectTimeout(4, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .build();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+            player = new ExoPlayerWrapper(httpClient);
+        } else {
+            // use old MediaPlayer on API levels < 16
+            // https://github.com/google/ExoPlayer/issues/711
+            player = new MediaPlayerWrapper(httpClient, playerThreadHandler);
+        }
 
         player.setStateListener(this);
     }
@@ -98,7 +119,9 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
                 final int audioSessionId = getAudioSessionId();
                 player.pause();
 
-                bufferCheckTimer.cancel();
+                if (BuildConfig.DEBUG) {
+                    bufferCheckTimer.cancel();
+                }
 
                 setState(PlayState.Paused, audioSessionId);
             }
@@ -117,7 +140,9 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
 
                 player.stop();
 
-                bufferCheckTimer.cancel();
+                if (BuildConfig.DEBUG) {
+                    bufferCheckTimer.cancel();
+                }
 
                 setState(PlayState.Idle, audioSessionId);
             }
@@ -152,6 +177,11 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
 
     public final void setVolume(float volume) {
         player.setVolume(volume);
+    }
+
+    @Override
+    public boolean canRecord() {
+        return player.canRecord();
     }
 
     @Override
@@ -194,11 +224,13 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
     private void setState(PlayState state, int audioSessionId) {
         if (BuildConfig.DEBUG) Log.d(TAG, String.format("set state '%s'", state.name()));
 
-        if (state == PlayState.Playing) {
-            bufferCheckTimer.cancel();
-            bufferCheckTimer.start();
-        } else {
-            bufferCheckTimer.cancel();
+        if (BuildConfig.DEBUG) {
+            if (state == PlayState.Playing) {
+                bufferCheckTimer.cancel();
+                bufferCheckTimer.start();
+            } else {
+                bufferCheckTimer.cancel();
+            }
         }
 
         playState = state;

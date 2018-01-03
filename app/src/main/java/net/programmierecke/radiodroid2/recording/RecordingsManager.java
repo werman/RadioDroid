@@ -48,7 +48,7 @@ public class RecordingsManager {
 
         @Override
         public void onRecordingEnded() {
-            if(ended) {
+            if (ended) {
                 return;
             }
 
@@ -67,6 +67,10 @@ public class RecordingsManager {
     private Map<Recordable, RunningRecordingInfo> runningRecordings = new HashMap<>();
 
     public void record(@NonNull Recordable recordable) {
+        if (!recordable.canRecord()) {
+            return;
+        }
+
         if (!runningRecordings.containsKey(recordable)) {
             RunningRecordingInfo info = new RunningRecordingInfo();
 

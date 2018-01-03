@@ -4,10 +4,6 @@ import android.support.annotation.NonNull;
 import android.util.Log;
 
 import net.programmierecke.radiodroid2.BuildConfig;
-import net.programmierecke.radiodroid2.HttpClient;
-import net.programmierecke.radiodroid2.Utils;
-import net.programmierecke.radiodroid2.data.PlaylistM3U;
-import net.programmierecke.radiodroid2.data.PlaylistM3UEntry;
 import net.programmierecke.radiodroid2.data.ShoutcastInfo;
 import net.programmierecke.radiodroid2.data.StreamLiveInfo;
 import net.programmierecke.radiodroid2.recording.Recordable;
@@ -20,14 +16,11 @@ import java.net.InetAddress;
 import java.net.ProtocolException;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.URL;
-import java.util.ArrayList;
+import java.net.SocketTimeoutException;
 import java.util.Arrays;
-import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -38,16 +31,18 @@ import okhttp3.ResponseBody;
 public class StreamProxy implements Recordable {
     private static final String TAG = "PROXY";
 
-    private StreamProxyEventReceiver callback;
+    private static final int MAX_RETRIES = 100;
+
+    private OkHttpClient httpClient;
+    private StreamProxyListener callback;
     private RecordableListener recordableListener;
     private String uri;
     private byte readBuffer[] = new byte[256 * 16];
-    private long connectionBytesTotal = 0;
     private volatile String localAddress = null;
     private boolean isStopped = false;
-    private boolean isHls = false;
 
-    public StreamProxy(String uri, StreamProxyEventReceiver callback) {
+    public StreamProxy(OkHttpClient httpClient, String uri, StreamProxyListener callback) {
+        this.httpClient = httpClient;
         this.uri = uri;
         this.callback = callback;
 
@@ -75,50 +70,42 @@ public class StreamProxy implements Recordable {
         boolean streamHasMetaData = false;
 
         if (info != null) {
-            callback.foundShoutcastStream(info, false);
+            callback.onFoundShoutcastStream(info, false);
             bytesUntilMetaData = info.metadataOffset;
             streamHasMetaData = true;
         }
 
         InputStream inputStream = responseBody.byteStream();
 
-        int readBytesBuffer = 0;
-
         while (!isStopped) {
-            int readBytes;
             if (!streamHasMetaData || (bytesUntilMetaData > 0)) {
-                int bytesToRead = Math.min(readBuffer.length - readBytesBuffer, inputStream.available());
+                int bytesToRead = Math.min(readBuffer.length, inputStream.available());
                 if (streamHasMetaData) {
                     bytesToRead = Math.min(bytesUntilMetaData, bytesToRead);
                 }
-                readBytes = inputStream.read(readBuffer, readBytesBuffer, bytesToRead);
+
+                int readBytes = inputStream.read(readBuffer, 0, bytesToRead);
                 if (readBytes == 0) {
                     continue;
                 }
                 if (readBytes < 0) {
                     break;
                 }
-                readBytesBuffer += readBytes;
-                connectionBytesTotal += readBytes;
+
                 if (streamHasMetaData) {
                     bytesUntilMetaData -= readBytes;
                 }
 
-                if (BuildConfig.DEBUG) Log.d(TAG, "stream bytes relayed:" + readBytes);
-
-                outStream.write(readBuffer, 0, readBytesBuffer);
+                outStream.write(readBuffer, 0, readBytes);
 
                 if (recordableListener != null) {
-                    recordableListener.onBytesAvailable(readBuffer, 0, readBytesBuffer);
+                    recordableListener.onBytesAvailable(readBuffer, 0, readBytes);
                 }
 
-                callback.onBytesRead(readBuffer, 0, readBytesBuffer);
-
-                readBytesBuffer = 0;
+                callback.onBytesRead(readBuffer, 0, readBytes);
             } else {
-                readBytes = readMetaData(inputStream);
+                readMetaData(inputStream);
                 bytesUntilMetaData = info.metadataOffset;
-                connectionBytesTotal += readBytes;
             }
         }
 
@@ -150,7 +137,7 @@ public class StreamProxy implements Recordable {
                     Map<String, String> rawMetadata = decodeShoutcastMetadata(s);
                     StreamLiveInfo streamLiveInfo = new StreamLiveInfo(rawMetadata);
                     if (BuildConfig.DEBUG) Log.d(TAG, "META:" + streamLiveInfo.getTitle());
-                    callback.foundLiveStreamInfo(streamLiveInfo);
+                    callback.onFoundLiveStreamInfo(streamLiveInfo);
                     break;
                 }
             }
@@ -158,150 +145,47 @@ public class StreamProxy implements Recordable {
         return readBytesBufferMetadata + 1;
     }
 
-    private void streamFile(String urlStr, OutputStream outStream) throws IOException {
-        if (BuildConfig.DEBUG) Log.d(TAG, "URL Stream Data:   " + urlStr);
-
-        Request request = new Request.Builder().url(urlStr)
-                .build();
-
-        OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
-                .connectTimeout(2, TimeUnit.SECONDS)
-                .readTimeout(10, TimeUnit.SECONDS)
-                .build();
-
-        Response response = httpClient.newCall(request).execute();
-
-        try {
-            ResponseBody responseBody = response.body();
-
-            InputStream inContent = responseBody.byteStream();
-
-            while (!isStopped) {
-                int bytesRead = inContent.read(readBuffer);
-                if (bytesRead < 0) {
-                    break;
-                }
-                connectionBytesTotal += bytesRead;
-                outStream.write(readBuffer, 0, bytesRead);
-
-                if (recordableListener != null) {
-                    recordableListener.onBytesAvailable(readBuffer, 0, bytesRead);
-                }
-            }
-        } catch (Exception e) {
-            response.close();
-            throw e;
-        }
-    }
-
-    private boolean containsString(ArrayList<String> list, String item) {
-        for (String aList : list) {
-            if (item.equals(aList)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private ArrayList<String> streamedFiles = new ArrayList<String>();
-
-    private void proxyHlsStream(URL path, ResponseBody responseBody, OutputStream outStream) throws IOException {
-        if (!isHls) {
-            isHls = true;
-            callback.foundShoutcastStream(null, true);
-        }
-
-        String responseString = responseBody.string();
-
-        if (BuildConfig.DEBUG) Log.d(TAG, "read m3u:\n" + responseString);
-
-        PlaylistM3U playlist = new PlaylistM3U(path, responseString);
-
-        PlaylistM3UEntry[] entries = playlist.getEntries();
-        for (PlaylistM3UEntry entry : entries) {
-            String urlStr = entry.getContent();
-
-            if (!entry.getIsStreamInformation()) {
-                // use this url in the future
-                uri = path.toString();
-
-                String urlWithoutQuery = urlStr;
-                int indexQuery = urlStr.indexOf("?");
-                if (indexQuery >= 0) {
-                    urlWithoutQuery = urlStr.substring(0, indexQuery);
-                }
-
-                if (!containsString(streamedFiles, urlWithoutQuery)) {
-                    Log.w(TAG, "did not find in db:" + urlWithoutQuery);
-                    streamedFiles.add(urlWithoutQuery);
-
-                    streamFile(urlStr, outStream);
-                }
-            } else {
-                Log.w(TAG, "URL Stream info:" + urlStr);
-
-                Request request = new Request.Builder().url(urlStr)
-                        .build();
-
-                OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
-                        .connectTimeout(2, TimeUnit.SECONDS)
-                        .readTimeout(10, TimeUnit.SECONDS)
-                        .build();
-
-                Response response = httpClient.newCall(request).execute();
-
-                try {
-                    ResponseBody newResponseBody = response.body();
-                    URL newStreamUrl = request.url().url();
-
-                    proxyHlsStream(newStreamUrl, newResponseBody, outStream);
-                } catch (Exception e) {
-                    response.close();
-                    throw e;
-                }
-
-                break;
-            }
-        }
-    }
-
     private void connectToStream() {
+        isStopped = false;
+
+        int retry = MAX_RETRIES;
+
+        Socket socketProxy = null;
+        OutputStream outputStream = null;
+        ServerSocket proxyServer = null;
+
         try {
-            final int MaxRetries = 100;
-            int retry = MaxRetries;
+            if (BuildConfig.DEBUG) Log.d(TAG, "creating local proxy");
+
+            // Create proxy stream which media player will connect to.
+
+            try {
+                proxyServer = new ServerSocket(0, 1, InetAddress.getLocalHost());
+            } catch (IOException e) {
+                e.printStackTrace();
+                return;
+            }
+
+            final int port = proxyServer.getLocalPort();
+            localAddress = String.format(Locale.US, "http://localhost:%d", port);
+
+            final Request request = new Request.Builder().url(uri)
+                    .addHeader("Icy-MetaData", "1")
+                    .build();
+
             while (!isStopped && retry > 0) {
                 ResponseBody responseBody = null;
-                Socket socketProxy = null;
-                OutputStream outputStream = null;
 
                 try {
-                    // connect to stream
                     if (BuildConfig.DEBUG) {
                         Log.d(TAG, "connecting to stream (try=" + retry + "):" + uri);
                     }
 
-                    final Request request = new Request.Builder().url(uri)
-                            .addHeader("Icy-MetaData", "1")
-                            .build();
-
-                    final OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
-                            .connectTimeout(4, TimeUnit.SECONDS)
-                            .readTimeout(10, TimeUnit.SECONDS)
-                            .retryOnConnectionFailure(true)
-                            .build();
-
-                    final Response response = httpClient.newCall(request).execute();
+                    Response response = httpClient.newCall(request).execute();
                     responseBody = response.body();
                     assert responseBody != null;
 
                     final MediaType contentType = responseBody.contentType();
-
-                    if (BuildConfig.DEBUG) Log.d(TAG, "creating local proxy");
-
-                    // Create proxy stream which media player will connect to.
-                    final ServerSocket proxyServer = new ServerSocket(0, 1, InetAddress.getLocalHost());
-                    final int port = proxyServer.getLocalPort();
-                    localAddress = String.format(Locale.US, "http://localhost:%d", port);
 
                     if (BuildConfig.DEBUG) Log.d(TAG, "waiting...");
 
@@ -310,9 +194,18 @@ public class StreamProxy implements Recordable {
                         break;
                     }
 
-                    callback.streamCreated(localAddress);
+                    if (socketProxy != null) {
+                        socketProxy.close();
+                        socketProxy = null;
+                    }
+
+                    if (outputStream != null) {
+                        outputStream.close();
+                        outputStream = null;
+                    }
+
+                    callback.onStreamCreated(localAddress);
                     socketProxy = proxyServer.accept();
-                    proxyServer.close();
 
                     // send ok message to local mediaplayer
                     if (BuildConfig.DEBUG) Log.d(TAG, "sending OK to the local media player");
@@ -327,11 +220,7 @@ public class StreamProxy implements Recordable {
                     if (BuildConfig.DEBUG) Log.d(TAG, "Content Type: " + type);
 
                     if (type.equals("application/vnd.apple.mpegurl") || type.equals("application/x-mpegurl")) {
-                        // Hls stream
-                        final URL url = request.url().url();
-                        proxyHlsStream(url, responseBody, outputStream);
-                        // wait some time for next check for new files in stream
-                        Thread.sleep(5000);
+                        Log.e(TAG, "Cannot play HLS streams through proxy!");
                     } else {
                         // try to get shoutcast information from stream connection
                         final ShoutcastInfo info = ShoutcastInfo.Decode(response);
@@ -339,26 +228,21 @@ public class StreamProxy implements Recordable {
                         proxyDefaultStream(info, responseBody, outputStream);
                     }
                     // reset retry count, if connection was ok
-                    retry = MaxRetries;
+                    retry = MAX_RETRIES;
                 } catch (ProtocolException protocolException) {
                     Log.e(TAG, "connecting to stream failed due to protocol exception, will NOT retry.", protocolException);
                     break;
+                } catch (SocketTimeoutException ignored) {
                 } catch (Exception e) {
                     Log.e(TAG, "exception occurred inside the connection loop, retry.", e);
                 } finally {
                     if (responseBody != null) {
                         responseBody.close();
                     }
-                    try {
-                        if (socketProxy != null) {
-                            socketProxy.close();
-                        }
-                        if (outputStream != null) {
-                            outputStream.close();
-                        }
-                    } catch (IOException e) {
-                        Log.e(TAG, "exception occurred while closing resources.", e);
-                    }
+                }
+
+                if (isStopped) {
+                    break;
                 }
 
                 retry--;
@@ -366,68 +250,54 @@ public class StreamProxy implements Recordable {
             }
         } catch (InterruptedException e) {
             Log.e(TAG, "Interrupted ex Proxy() ", e);
+        } finally {
+            try {
+                if (proxyServer != null) {
+                    proxyServer.close();
+                }
+
+                if (socketProxy != null) {
+                    socketProxy.close();
+                }
+                if (outputStream != null) {
+                    outputStream.close();
+                }
+            } catch (IOException e) {
+                Log.e(TAG, "exception occurred while closing resources.", e);
+            }
         }
+
         // inform outside if stream stopped, only if outside did not initiate stop
         if (!isStopped) {
-            callback.streamStopped();
+            callback.onStreamStopped();
         }
 
         stop();
     }
 
-    private Map<String, String> decodeShoutcastMetadata(String metadata) {
-        // icecast server does not encode "'" inside strings. so i am not able to check when a string ends
-        //boolean stringStartedSingle = false;
-        //boolean stringStartedDouble = false;
-        String key = "";
-        String value = "";
-        boolean valueActive = false;
+    private Map<String, String> decodeShoutcastMetadata(String metadataStr) {
+        Map<String, String> metadata = new HashMap<>();
 
-        Map<String, String> dict = new HashMap<String, String>();
-        for (int i = 0; i < metadata.length(); i++) {
-            char c = metadata.charAt(i);
+        String[] kvs = metadataStr.split(";");
 
-            /*if (stringStartedDouble || stringStartedSingle){
-                if (c == '\'' && stringStartedSingle){
-                    stringStartedSingle = false;
-                } else if (c == '"' && stringStartedDouble){
-                    stringStartedDouble = false;
-                }else{
-                    if (valueActive){
-                        value += c;
-                    }else{
-                        key += c;
-                    }
-                }
-            } else */
-            {
-                if (c == '\'') {
-                    //stringStartedSingle = true;
-                } else if (c == '"') {
-                    //stringStartedDouble = true;
-                } else if (c == '=') {
-                    valueActive = true;
-                } else if (c == ';') {
-                    valueActive = false;
-                    dict.remove(key);
-                    dict.put(key, value);
-                    key = "";
-                    value = "";
-                } else {
-                    if (valueActive) {
-                        value += c;
-                    } else {
-                        key += c;
-                    }
-                }
-            }
+        for (String kv : kvs) {
+            final int n = kv.indexOf('=');
+            if (n < 1) continue;
 
+            final boolean isString = n + 1 < kv.length()
+                    && kv.charAt(kv.length() - 1) == '\''
+                    && kv.charAt(n + 1) == '\'';
+
+            final String key = kv.substring(0, n);
+            final String val = isString ?
+                    kv.substring(n + 2, kv.length() - 1) :
+                    n + 1 < kv.length() ?
+                            kv.substring(n + 1) : "";
+
+            metadata.put(key, val);
         }
-        if (valueActive) {
-            dict.remove(key);
-            dict.put(key, value);
-        }
-        return dict;
+
+        return metadata;
     }
 
     public String getLocalAddress() {
@@ -436,8 +306,15 @@ public class StreamProxy implements Recordable {
 
     public void stop() {
         if (BuildConfig.DEBUG) Log.d(TAG, "stopping proxy.");
+
         isStopped = true;
+
         stopRecording();
+    }
+
+    @Override
+    public boolean canRecord() {
+        return true;
     }
 
     @Override
@@ -465,6 +342,6 @@ public class StreamProxy implements Recordable {
 
     @Override
     public String getExtension() {
-        return isHls ? "ts" : "mp3";
+        return "mp3";
     }
 }

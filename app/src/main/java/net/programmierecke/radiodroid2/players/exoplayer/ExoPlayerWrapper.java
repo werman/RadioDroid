@@ -67,6 +67,8 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
     public void playRemote(String remoteUrl, Context context, boolean isAlarm) {
         currentPlaybackTransferredBytes = 0;
 
+        stateListener.onStateChanged(RadioPlayer.PlayState.PrePlaying);
+
         if (player != null) {
             player.stop();
         }
@@ -203,6 +205,11 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
         if (recordableListener != null) {
             recordableListener.onBytesAvailable(buffer, offset, length);
         }
+    }
+
+    @Override
+    public boolean canRecord() {
+        return player != null;
     }
 
     @Override

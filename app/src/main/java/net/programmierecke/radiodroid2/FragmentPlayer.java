@@ -108,7 +108,7 @@ public class FragmentPlayer extends Fragment {
 							PlayerServiceUtil.stopRecording();
 							layoutPlaying.setVisibility(View.GONE);
 						}
-                        PlayerServiceUtil.stop();
+                        PlayerServiceUtil.pause();
 					} else {
 						buttonPause.setImageResource(R.drawable.ic_pause_circle);
 						if(PlayerServiceUtil.getStationName() != null)

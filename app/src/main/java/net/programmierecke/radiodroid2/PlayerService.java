@@ -1,7 +1,6 @@
 package net.programmierecke.radiodroid2;
 
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 import android.app.Notification;
 import android.app.PendingIntent;
@@ -43,13 +42,9 @@ import com.squareup.picasso.Target;
 
 import net.programmierecke.radiodroid2.data.ShoutcastInfo;
 import net.programmierecke.radiodroid2.data.StreamLiveInfo;
-import net.programmierecke.radiodroid2.players.exoplayer.ExoPlayerWrapper;
-import net.programmierecke.radiodroid2.players.mediaplayer.MediaPlayerWrapper;
 import net.programmierecke.radiodroid2.players.RadioPlayer;
 import net.programmierecke.radiodroid2.recording.RecordingsManager;
 import net.programmierecke.radiodroid2.recording.RunningRecordingInfo;
-
-import okhttp3.OkHttpClient;
 
 public class PlayerService extends Service implements RadioPlayer.PlayerListener {
     protected static final int NOTIFY_ID = 1;
@@ -378,19 +373,7 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
         audioManager = (AudioManager) itsContext.getSystemService(Context.AUDIO_SERVICE);
         radioIcon = ((BitmapDrawable) ResourcesCompat.getDrawable(getResources(), R.drawable.ic_launcher, null));
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
-                    .connectTimeout(2, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
-                    .build();
-
-            radioPlayer = new RadioPlayer(PlayerService.this, new ExoPlayerWrapper(httpClient));
-        } else {
-            // use old MediaPlayer on API levels < 16
-            // https://github.com/google/ExoPlayer/issues/711
-            radioPlayer = new RadioPlayer(PlayerService.this, new MediaPlayerWrapper());
-        }
-
+        radioPlayer = new RadioPlayer(PlayerService.this);
         radioPlayer.setPlayerListener(this);
     }
 
@@ -669,13 +652,17 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
     }
 
     private void updateNotification() {
-        switch (radioPlayer.getPlayState()) {
+        updateNotification(radioPlayer.getPlayState());
+    }
+
+    private void updateNotification(RadioPlayer.PlayState playState) {
+        switch (playState) {
             case Idle:
                 NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
                 notificationManager.cancel(NOTIFY_ID);
                 break;
             case PrePlaying:
-                sendMessage(currentStationName, itsContext.getResources().getString(R.string.notify_try_play), itsContext.getResources().getString(R.string.notify_try_play));
+                sendMessage(currentStationName, itsContext.getResources().getString(R.string.notify_pre_play), itsContext.getResources().getString(R.string.notify_pre_play));
                 break;
             case Playing:
                 final String title = liveInfo.getTitle();
@@ -686,11 +673,12 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
                     sendMessage(currentStationName, itsContext.getResources().getString(R.string.notify_play), currentStationName);
                 }
 
-                final MediaMetadataCompat.Builder builder = new MediaMetadataCompat.Builder();
-                builder.putString(MediaMetadataCompat.METADATA_KEY_ARTIST, liveInfo.getArtist());
-                builder.putString(MediaMetadataCompat.METADATA_KEY_TITLE, liveInfo.getTrack());
-                mediaSession.setMetadata(builder.build());
-
+                if (mediaSession != null) {
+                    final MediaMetadataCompat.Builder builder = new MediaMetadataCompat.Builder();
+                    builder.putString(MediaMetadataCompat.METADATA_KEY_ARTIST, liveInfo.getArtist());
+                    builder.putString(MediaMetadataCompat.METADATA_KEY_TITLE, liveInfo.getTrack());
+                    mediaSession.setMetadata(builder.build());
+                }
                 break;
             case Paused:
                 sendMessage(currentStationName, itsContext.getResources().getString(R.string.notify_paused), currentStationName);
@@ -789,7 +777,7 @@ public class PlayerService extends Service implements RadioPlayer.PlayerListener
                     }
                 }
 
-                updateNotification();
+                updateNotification(state);
             }
         });
     }

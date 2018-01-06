@@ -97,13 +97,12 @@ public class IcyDataSource implements HttpDataSource {
 
     public IcyDataSource(@NonNull OkHttpClient httpClient,
                          @NonNull TransferListener<? super HttpDataSource> listener,
-                         @NonNull IcyDataSourceListener dataSourceListener) {
+                         @NonNull IcyDataSourceListener dataSourceListener,
+                         long timeUntilStopReconnecting,
+                         long delayBetweenReconnections) {
         this.httpClient = httpClient;
         this.transferListener = listener;
         this.dataSourceListener = dataSourceListener;
-    }
-
-    public void setReconnectionSettings(long timeUntilStopReconnecting, long delayBetweenReconnections) {
         this.timeUntilStopReconnecting = timeUntilStopReconnecting;
         this.delayBetweenReconnections = delayBetweenReconnections;
     }

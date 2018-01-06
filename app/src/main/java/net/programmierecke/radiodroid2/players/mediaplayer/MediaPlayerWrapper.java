@@ -24,7 +24,6 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyListener {
 
     final private String TAG = "MediaPlayerWrapper";
 
-    private OkHttpClient httpClient;
     private Handler playerThreadHandler;
 
     private MediaPlayer mediaPlayer;
@@ -42,15 +41,12 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyListener {
 
     private AtomicBoolean playerIsInLegalState = new AtomicBoolean(false);
 
-    public MediaPlayerWrapper(OkHttpClient httpClient, Handler playerThreadHandler) {
-        this.httpClient = httpClient;
+    public MediaPlayerWrapper(Handler playerThreadHandler) {
         this.playerThreadHandler = playerThreadHandler;
     }
 
     @Override
-    public void playRemote(String streamUrl, Context context, boolean isAlarm) {
-        Log.v(TAG, "Stream url:" + streamUrl);
-
+    public void playRemote(@NonNull OkHttpClient httpClient, @NonNull String streamUrl, @NonNull Context context, boolean isAlarm) {
         if (!streamUrl.equals(this.streamUrl)) {
             currentPlaybackTransferredBytes = 0;
         }
@@ -58,6 +54,8 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyListener {
         this.streamUrl = streamUrl;
         this.context = context;
         this.isAlarm = isAlarm;
+
+        Log.v(TAG, "Stream url:" + streamUrl);
 
         isHls = streamUrl.endsWith(".m3u8");
 

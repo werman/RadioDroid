@@ -1,12 +1,14 @@
 package net.programmierecke.radiodroid2.players;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.support.annotation.NonNull;
+import android.support.v7.preference.PreferenceManager;
 import android.util.Log;
 
 import net.programmierecke.radiodroid2.BuildConfig;
@@ -47,6 +49,7 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
     }
 
     private PlayerWrapper player;
+    private OkHttpClient httpClient;
     private Context mainContext;
 
     private String streamName;
@@ -81,19 +84,16 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
 
         playerThreadHandler = new Handler(playerThread.getLooper());
 
-        // TODO: timeout values from preferences.
-        OkHttpClient httpClient = HttpClient.getInstance().newBuilder()
-                .connectTimeout(4, TimeUnit.SECONDS)
-                .readTimeout(10, TimeUnit.SECONDS)
+        httpClient = HttpClient.getInstance().newBuilder()
                 .retryOnConnectionFailure(true)
                 .build();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-            player = new ExoPlayerWrapper(httpClient);
+            player = new ExoPlayerWrapper();
         } else {
             // use old MediaPlayer on API levels < 16
             // https://github.com/google/ExoPlayer/issues/711
-            player = new MediaPlayerWrapper(httpClient, playerThreadHandler);
+            player = new MediaPlayerWrapper(playerThreadHandler);
         }
 
         player.setStateListener(this);
@@ -104,10 +104,19 @@ public class RadioPlayer implements PlayerWrapper.PlayListener, Recordable {
 
         this.streamName = streamName;
 
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(mainContext.getApplicationContext());
+        final int connectTimeout = prefs.getInt("stream_connect_timeout", 4);
+        final int readTimeout = prefs.getInt("stream_read_timeout", 10);
+
+        final OkHttpClient customizedHttpClient = httpClient.newBuilder()
+                .connectTimeout(connectTimeout, TimeUnit.SECONDS)
+                .readTimeout(readTimeout, TimeUnit.SECONDS)
+                .build();
+
         playerThreadHandler.post(new Runnable() {
             @Override
             public void run() {
-                player.playRemote(stationURL, mainContext, isAlarm);
+                player.playRemote(customizedHttpClient, stationURL, mainContext, isAlarm);
             }
         });
     }

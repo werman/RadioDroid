@@ -2,10 +2,12 @@ package net.programmierecke.radiodroid2.players.exoplayer;
 
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.v7.preference.PreferenceManager;
 import android.util.Log;
 
 import com.google.android.exoplayer2.DefaultRenderersFactory;
@@ -48,6 +50,8 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
     private SimpleExoPlayer player;
     private PlayListener stateListener;
 
+    private String streamUrl;
+
     private DefaultBandwidthMeter bandwidthMeter = new DefaultBandwidthMeter();
 
     private OkHttpClient httpClient;
@@ -59,13 +63,14 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
 
     private boolean isHls;
 
-    public ExoPlayerWrapper(@NonNull OkHttpClient httpClient) {
-        this.httpClient = httpClient;
-    }
-
     @Override
-    public void playRemote(String remoteUrl, Context context, boolean isAlarm) {
-        currentPlaybackTransferredBytes = 0;
+    public void playRemote(@NonNull OkHttpClient httpClient, @NonNull String streamUrl, @NonNull Context context, boolean isAlarm) {
+        if (!streamUrl.equals(this.streamUrl)) {
+            currentPlaybackTransferredBytes = 0;
+        }
+
+        this.httpClient = httpClient;
+        this.streamUrl = streamUrl;
 
         stateListener.onStateChanged(RadioPlayer.PlayState.PrePlaying);
 
@@ -84,17 +89,21 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
             player.setAudioDebugListener(new AudioEventListener());
         }
 
-        isHls = remoteUrl.endsWith(".m3u8");
+        isHls = streamUrl.endsWith(".m3u8");
 
-        DataSource.Factory dataSourceFactory = new RadioDataSourceFactory(httpClient, bandwidthMeter, this);
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
+        final int retryTimeout = prefs.getInt("settings_retry_timeout", 4);
+        final int retryDelay = prefs.getInt("settings_retry_delay", 10);
+
+        DataSource.Factory dataSourceFactory = new RadioDataSourceFactory(httpClient, bandwidthMeter, this, retryTimeout, retryDelay);
         // Produces Extractor instances for parsing the media data.
         ExtractorsFactory extractorsFactory = new DefaultExtractorsFactory();
 
         if (!isHls) {
-            MediaSource audioSource = new ExtractorMediaSource(Uri.parse(remoteUrl), dataSourceFactory, extractorsFactory, null, null);
+            MediaSource audioSource = new ExtractorMediaSource(Uri.parse(streamUrl), dataSourceFactory, extractorsFactory, null, null);
             player.prepare(audioSource);
         } else {
-            MediaSource audioSource = new HlsMediaSource(Uri.parse(remoteUrl), dataSourceFactory, null, null);
+            MediaSource audioSource = new HlsMediaSource(Uri.parse(streamUrl), dataSourceFactory, null, null);
             player.prepare(audioSource);
         }
 
@@ -184,7 +193,9 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
 
     @Override
     public void onDataSourceConnectionLostIrrecoverably() {
-
+        stop();
+        stateListener.onStateChanged(RadioPlayer.PlayState.Idle);
+        stateListener.onPlayerError(R.string.error_stream_reconnect_timeout);
     }
 
     @Override

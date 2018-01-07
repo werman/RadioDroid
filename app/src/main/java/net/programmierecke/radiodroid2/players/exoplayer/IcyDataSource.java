@@ -36,10 +36,10 @@ import static okhttp3.internal.Util.closeQuietly;
  * retrieves stream's {@link ShoutcastInfo} and {@link StreamLiveInfo} if any,
  * attempts to reconnect if connection is lost. These distinguishes it from {@link DefaultHttpDataSource}.
  * <p>
- * When connection is lost attempts to reconnect will made for {@value DEFAULT_TIME_UNTIL_STOP_RECONNECTING}
- * milliseconds alongside with calling {@link IcyDataSourceListener#onDataSourceConnectionLost()},
- * after {@value DEFAULT_TIME_UNTIL_STOP_RECONNECTING} have passed
- * {@link IcyDataSourceListener#onDataSourceConnectionLostIrrecoverably()} ()} will be called.
+ * When connection is lost attempts to reconnect will made alongside with calling
+ * {@link IcyDataSourceListener#onDataSourceConnectionLost()}.
+ * After reconnecting time has passed
+ * {@link IcyDataSourceListener#onDataSourceConnectionLostIrrecoverably()} will be called.
  **/
 public class IcyDataSource implements HttpDataSource {
 
@@ -78,8 +78,8 @@ public class IcyDataSource implements HttpDataSource {
     private final TransferListener<? super HttpDataSource> transferListener;
     private final IcyDataSourceListener dataSourceListener;
 
-    private long timeUntilStopReconnecting = DEFAULT_TIME_UNTIL_STOP_RECONNECTING;
-    private long delayBetweenReconnections = DEFAULT_DELAY_BETWEEN_RECONNECTIONS;
+    private long timeUntilStopReconnecting;
+    private long delayBetweenReconnections;
 
     private Request request;
 

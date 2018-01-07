@@ -54,8 +54,6 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
 
     private DefaultBandwidthMeter bandwidthMeter = new DefaultBandwidthMeter();
 
-    private OkHttpClient httpClient;
-
     private RecordableListener recordableListener;
 
     private long totalTransferredBytes;
@@ -69,7 +67,6 @@ public class ExoPlayerWrapper implements PlayerWrapper, IcyDataSource.IcyDataSou
             currentPlaybackTransferredBytes = 0;
         }
 
-        this.httpClient = httpClient;
         this.streamUrl = streamUrl;
 
         stateListener.onStateChanged(RadioPlayer.PlayState.PrePlaying);

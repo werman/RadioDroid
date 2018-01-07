@@ -85,13 +85,18 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyListener {
         try {
             mediaPlayer.setAudioStreamType(isAlarm ? AudioManager.STREAM_ALARM : AudioManager.STREAM_MUSIC);
             mediaPlayer.setDataSource(proxyUrl);
-            mediaPlayer.prepare();
+            mediaPlayer.prepareAsync();
 
-            playerIsInLegalState.set(true);
+            mediaPlayer.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
+                @Override
+                public void onPrepared(MediaPlayer mp) {
+                    playerIsInLegalState.set(true);
 
-            stateListener.onStateChanged(RadioPlayer.PlayState.PrePlaying);
-            mediaPlayer.start();
-            stateListener.onStateChanged(RadioPlayer.PlayState.Playing);
+                    stateListener.onStateChanged(RadioPlayer.PlayState.PrePlaying);
+                    mediaPlayer.start();
+                    stateListener.onStateChanged(RadioPlayer.PlayState.Playing);
+                }
+            });
         } catch (IllegalArgumentException e) {
             Log.e(TAG, "" + e);
             stateListener.onPlayerError(R.string.error_stream_url);
@@ -106,12 +111,16 @@ public class MediaPlayerWrapper implements PlayerWrapper, StreamProxyListener {
 
     @Override
     public void pause() {
-        if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-            mediaPlayer.stop();
-            mediaPlayer.reset();
-        }
+        if (mediaPlayer != null) {
+            if (mediaPlayer.isPlaying()) {
+                mediaPlayer.stop();
+                mediaPlayer.reset();
 
-        stateListener.onStateChanged(RadioPlayer.PlayState.Paused);
+                stateListener.onStateChanged(RadioPlayer.PlayState.Paused);
+            } else {
+                stop();
+            }
+        }
 
         stopProxy();
     }

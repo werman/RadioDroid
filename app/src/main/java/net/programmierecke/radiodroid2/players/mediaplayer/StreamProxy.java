@@ -205,6 +205,7 @@ public class StreamProxy implements Recordable {
                     }
 
                     callback.onStreamCreated(localAddress);
+                    proxyServer.setSoTimeout(2000);
                     socketProxy = proxyServer.accept();
 
                     // send ok message to local mediaplayer

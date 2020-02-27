@@ -253,7 +253,8 @@ public class ItemAdapterStation
         if (!shouldLoadIcons) {
             holder.imageViewIcon.setVisibility(View.GONE);
         } else {
-            if (!station.IconUrl.isEmpty()) {
+            String iconUrl = station.getIconUrl();
+            if (iconUrl != null) {
                 setupIcon(useCircularIcons, holder.imageViewIcon, holder.transparentImageView);
                 PlayerServiceUtil.getStationIcon(holder.imageViewIcon, station.IconUrl);
             } else {

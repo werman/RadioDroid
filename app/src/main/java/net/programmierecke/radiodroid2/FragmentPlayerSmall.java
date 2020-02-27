@@ -251,11 +251,15 @@ public class FragmentPlayerSmall extends Fragment {
 
         if (!Utils.shouldLoadIcons(getContext())) {
             imageViewIcon.setVisibility(View.GONE);
-        } else if (station != null) {
-            imageViewIcon.setVisibility(View.VISIBLE);
-            PlayerServiceUtil.getStationIcon(imageViewIcon, station.IconUrl);
         } else {
-            imageViewIcon.setImageResource(R.drawable.ic_launcher);
+            String iconUrl = station != null ? station.getIconUrl() : null;
+            if (iconUrl != null) {
+                imageViewIcon.setVisibility(View.VISIBLE);
+                PlayerServiceUtil.getStationIcon(imageViewIcon, station.IconUrl);
+            } else {
+                imageViewIcon.setImageResource(R.drawable.ic_launcher);
+            }
+
         }
 
         if (role == Role.PLAYER) {

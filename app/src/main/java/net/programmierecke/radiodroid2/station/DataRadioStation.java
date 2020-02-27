@@ -16,6 +16,8 @@ import android.os.Build;
 import android.text.TextUtils;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+
 import com.squareup.picasso.Picasso;
 import com.squareup.picasso.Target;
 
@@ -110,6 +112,13 @@ public class DataRadioStation implements Parcelable {
 		}
 		return TextUtils.join(", ", aList);
 	}
+
+    public @Nullable
+    String getIconUrl() {
+        // TODO: we shouldn't have IconUrl in a wrong state in first of all
+        String trimmed = IconUrl != null ? IconUrl.trim() : null;
+        return TextUtils.isEmpty(trimmed) ? null : trimmed;
+    }
 
 	public static List<DataRadioStation> DecodeJson(String result) {
 		List<DataRadioStation> aList = new ArrayList<DataRadioStation>();
@@ -386,8 +395,9 @@ public class DataRadioStation implements Parcelable {
 	}
 
     public void prepareShortcut(Context ctx, ShortcutReadyListener cb) {
+        String iconUrl = getIconUrl();
         Picasso.get()
-                .load((TextUtils.isEmpty(IconUrl) ? resourceToUri(ctx.getResources(), R.drawable.ic_launcher).toString() : IconUrl))
+                .load((iconUrl == null ? resourceToUri(ctx.getResources(), R.drawable.ic_launcher).toString() : iconUrl))
                 .error(R.drawable.ic_launcher)
                 .transform(Utils.useCircularIcons(ctx) ? new CropCircleTransformation() : new CropSquareTransformation())
                 .transform(new RoundedCornersTransformation(12, 2, RoundedCornersTransformation.CornerType.ALL))

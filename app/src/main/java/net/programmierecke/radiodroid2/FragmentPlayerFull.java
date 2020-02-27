@@ -549,10 +549,17 @@ public class FragmentPlayerFull extends Fragment {
             return;
         }
 
-        if (TextUtils.isEmpty(liveInfo.getArtist()) || TextUtils.isEmpty(liveInfo.getTrack())) {
-            Picasso.get()
-                    .load(station.IconUrl)
-                    .into(artAndInfoPagerAdapter.imageViewArt);
+        if (TextUtils.isEmpty(liveInfo.getArtist()) || TextUtils.isEmpty(liveInfo.getTrack()) ||
+                BuildConfig.LastFMAPIKey.isEmpty()) {
+            String iconUrl = station.getIconUrl();
+            if (iconUrl != null) {
+                Picasso.get()
+                        .load(station.IconUrl)
+                        .into(artAndInfoPagerAdapter.imageViewArt);
+            } else {
+                artAndInfoPagerAdapter.imageViewArt.setImageResource(R.drawable.ic_launcher);
+            }
+
             return;
         }
 
@@ -636,10 +643,13 @@ public class FragmentPlayerFull extends Fragment {
 
                     DataRadioStation station = Utils.getCurrentOrLastStation(fragment.requireContext());
 
-                    if (station != null && !TextUtils.isEmpty(station.IconUrl.trim())) {
+                    String iconUrl = station != null ? station.getIconUrl() : null;
+                    if (iconUrl != null) {
                         Picasso.get()
                                 .load(station.IconUrl)
                                 .into(fragment.artAndInfoPagerAdapter.imageViewArt);
+                    } else {
+                        fragment.artAndInfoPagerAdapter.imageViewArt.setImageResource(R.drawable.ic_launcher);
                     }
 
                     fragment.trackMetadataCallback = null;

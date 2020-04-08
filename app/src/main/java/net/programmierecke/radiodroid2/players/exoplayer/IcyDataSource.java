@@ -1,6 +1,11 @@
 package net.programmierecke.radiodroid2.players.exoplayer;
 
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.net.ConnectivityManager;
 import android.net.Uri;
 import android.util.Log;
 
@@ -13,6 +18,7 @@ import com.google.android.exoplayer2.upstream.HttpDataSource;
 import com.google.android.exoplayer2.upstream.TransferListener;
 
 import net.programmierecke.radiodroid2.BuildConfig;
+import net.programmierecke.radiodroid2.Utils;
 import net.programmierecke.radiodroid2.station.live.ShoutcastInfo;
 import net.programmierecke.radiodroid2.station.live.StreamLiveInfo;
 
@@ -23,6 +29,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -40,8 +47,6 @@ import static okhttp3.internal.Util.closeQuietly;
  * <p>
  * When connection is lost attempts to reconnect will made alongside with calling
  * {@link IcyDataSourceListener#onDataSourceConnectionLost()}.
- * After reconnecting time has passed
- * {@link IcyDataSourceListener#onDataSourceConnectionLostIrrecoverably()} will be called.
  **/
 public class IcyDataSource implements HttpDataSource {
 
@@ -60,11 +65,6 @@ public class IcyDataSource implements HttpDataSource {
          */
         void onDataSourceConnectionLost();
 
-        /**
-         * Called when data source gives up reconnecting.
-         */
-        void onDataSourceConnectionLostIrrecoverably();
-
         void onDataSourceShoutcastInfo(@Nullable ShoutcastInfo shoutcastInfo);
 
         void onDataSourceStreamLiveInfo(StreamLiveInfo streamLiveInfo);
@@ -77,12 +77,17 @@ public class IcyDataSource implements HttpDataSource {
     private DataSpec dataSpec;
 
     private final OkHttpClient httpClient;
+    private final Context context;
     private final TransferListener transferListener;
     private final IcyDataSourceListener dataSourceListener;
 
     private long timeUntilStopReconnecting;
     private long delayBetweenReconnections;
 
+    private final Object callObjSynchronizer = new Object();
+    private final Object reconnectionAwaiter = new Object();
+
+    private Call call;
     private Request request;
 
     private ResponseBody responseBody;
@@ -97,12 +102,41 @@ public class IcyDataSource implements HttpDataSource {
     private ShoutcastInfo shoutcastInfo;
     private StreamLiveInfo streamLiveInfo;
 
+    private boolean networkChangedReceiverRegistered = false;
+    private final BroadcastReceiver networkChangedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            // There are two interesting scenarios:
+            // 1) We are sleeping between attempts to reconnect, then we can interrupt the sleep
+            // 2) We are waiting for network response, we could prematurely stop it in order to
+            //    immediately try again.
+            //
+            // This method is called from a different thread than all other methods of IcyDataSource
+
+            if (Utils.hasAnyConnection(context)) {
+                Log.i(TAG, "Regained connection. Resuming playback.");
+
+                // To resume in scenario 1)
+                reconnectionAwaiter.notify();
+
+                // To resume in scenario 2)
+                synchronized (callObjSynchronizer) {
+                    if (call != null) {
+                        call.cancel();
+                    }
+                }
+            }
+        }
+    };
+
     public IcyDataSource(@NonNull OkHttpClient httpClient,
+                         @NonNull Context context,
                          @NonNull TransferListener listener,
                          @NonNull IcyDataSourceListener dataSourceListener,
                          long timeUntilStopReconnecting,
                          long delayBetweenReconnections) {
         this.httpClient = httpClient;
+        this.context = context;
         this.transferListener = listener;
         this.dataSourceListener = dataSourceListener;
         this.timeUntilStopReconnecting = timeUntilStopReconnecting;
@@ -130,10 +164,35 @@ public class IcyDataSource implements HttpDataSource {
         return connect();
     }
 
+    private void listenToChangesInConnectivity() {
+        stopListeningToConnectivityChanges();
+
+        context.registerReceiver(networkChangedReceiver, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+        networkChangedReceiverRegistered = true;
+    }
+
+    private void stopListeningToConnectivityChanges() {
+        if (networkChangedReceiverRegistered) {
+            context.unregisterReceiver(networkChangedReceiver);
+            networkChangedReceiverRegistered = false;
+        }
+    }
+
     private long connect() throws HttpDataSourceException {
+        if (responseBody != null) {
+            closeQuietly(responseBody);
+            responseBody = null;
+        }
+
+        listenToChangesInConnectivity();
+
         Response response;
         try {
-            response = httpClient.newCall(request).execute();
+            synchronized (callObjSynchronizer) {
+                call = httpClient.newCall(request);
+            }
+
+            response = call.execute();
         } catch (IOException e) {
             throw new HttpDataSourceException("Unable to connect to " + dataSpec.uri.toString(), e,
                     dataSpec, HttpDataSourceException.TYPE_OPEN);
@@ -143,7 +202,7 @@ public class IcyDataSource implements HttpDataSource {
 
         if (!response.isSuccessful()) {
             final Map<String, List<String>> headers = request.headers().toMultimap();
-            throw new InvalidResponseCodeException(responseCode, headers, dataSpec);
+            throw new InvalidResponseCodeException(responseCode, null, headers, dataSpec);
         }
 
         responseBody = response.body();
@@ -190,9 +249,17 @@ public class IcyDataSource implements HttpDataSource {
 
     @Override
     public void close() throws HttpDataSourceException {
+        stopListeningToConnectivityChanges();
+
         if (opened) {
             opened = false;
             transferListener.onTransferEnd(this, dataSpec, true);
+        }
+
+        synchronized (callObjSynchronizer) {
+            if (call != null) {
+                call = null;
+            }
         }
 
         if (responseBody != null) {
@@ -222,14 +289,14 @@ public class IcyDataSource implements HttpDataSource {
                     break;
                 } catch (HttpDataSourceException ex) {
                     try {
-                        Thread.sleep(delayBetweenReconnections);
+                        reconnectionAwaiter.wait(delayBetweenReconnections);
+//                        Thread.sleep(delayBetweenReconnections);
                     } catch (InterruptedException e) {
                         break;
                     }
                 }
 
                 if (currentTime - reconnectStartTime > timeUntilStopReconnecting) {
-                    dataSourceListener.onDataSourceConnectionLostIrrecoverably();
                     throw new HttpDataSourceException("Reconnection retry time ended.", dataSpec, HttpDataSourceException.TYPE_READ);
                 }
             }
@@ -247,12 +314,12 @@ public class IcyDataSource implements HttpDataSource {
 
         int ret = 0;
         try {
-            ret = stream.read(buffer, offset, remainingUntilMetadata < readLength ? remainingUntilMetadata : readLength);
+            ret = stream.read(buffer, offset, Math.min(remainingUntilMetadata, readLength));
         } catch (IOException e) {
             throw new HttpDataSourceException(e, dataSpec, HttpDataSourceException.TYPE_READ);
         }
 
-        if(ret > 0) {
+        if (ret > 0) {
             dataSourceListener.onDataSourceBytesRead(buffer, offset, ret);
         }
 
